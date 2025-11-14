@@ -175,13 +175,18 @@ public class FrontServlet extends HttpServlet {
         
         // Vérifier si le type de retour est String
         if (method.getReturnType().equals(String.class)) {
-            Object result = method.invoke(controllerInstance);
-            
-            if (result != null) {
-                response.setContentType("text/html;charset=UTF-8");
-                PrintWriter out = response.getWriter();
-                out.print(result.toString());
-            }
+            response.setContentType("text/html;charset=UTF-8");
+            PrintWriter out = response.getWriter();
+            out.println("<!DOCTYPE html>");
+            out.println("<html>");
+            out.println("<head><title>Framework - Method Info</title></head>");
+            out.println("<body>");
+            out.println("<h1>Méthode trouvée</h1>");
+            out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
+            out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
+            out.println("<p><strong>Type de retour:</strong> " + method.getReturnType().getSimpleName() + "</p>");
+            out.println("</body>");
+            out.println("</html>");
         } else {
             // Type de retour non géré
             response.setContentType("text/html;charset=UTF-8");
