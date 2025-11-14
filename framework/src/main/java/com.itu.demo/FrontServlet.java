@@ -1,21 +1,108 @@
 package com.itu.demo;
 
 import java.io.*;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
 import javax.servlet.ServletException;
 import javax.servlet.http.*;
 
-import javax.servlet.ServletException;
 import javax.servlet.RequestDispatcher;
 import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
 import java.io.PrintWriter;
 
+import com.itu.demo.annotations.Controller;
+import com.itu.demo.annotations.HandleURL;
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/", "*.jsp"}, loadOnStartup = 1)
 public class FrontServlet extends HttpServlet {
+    
+    // Map pour stocker URL -> Mapping (classe + méthode)
+    private Map<String, Mapping> urlMappings = new HashMap<>();
+    
+    @Override
+    public void init() throws ServletException {
+        super.init();
+        try {
+            scanControllers();
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors du scan des contrôleurs", e);
+        }
+    }
+    
+    private void scanControllers() throws Exception {
+        String cp = System.getProperty("java.class.path");
+        String[] entries = cp.split(File.pathSeparator);
+        java.util.List<String> classNames = new java.util.ArrayList<>();
+
+        for (String entry : entries) {
+            File f = new File(entry);
+            if (f.exists()) {
+                if (f.isDirectory()) {
+                    scanDirectory(f, f, classNames);
+                } else if (f.isFile() && entry.toLowerCase().endsWith(".jar")) {
+                    scanJar(f, classNames);
+                }
+            }
+        }
+
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        for (String cn : classNames) {
+            if (cn.contains("$")) continue;
+            try {
+                Class<?> c = Class.forName(cn, false, cl);
+                if (c.isAnnotationPresent(Controller.class)) {
+                    registerController(c);
+                }
+            } catch (Throwable t) {
+                // ignore classes that cannot be loaded
+            }
+        }
+    }
+    
+    private void registerController(Class<?> controllerClass) throws Exception {
+        Method[] methods = controllerClass.getDeclaredMethods();
+        for (Method method : methods) {
+            if (method.isAnnotationPresent(HandleURL.class)) {
+                HandleURL handleURL = method.getAnnotation(HandleURL.class);
+                String url = handleURL.value();
+                if (!url.isEmpty()) {
+                    urlMappings.put(url, new Mapping(controllerClass, method));
+                    System.out.println("Mapped URL: " + url + " -> " + 
+                        controllerClass.getName() + "." + method.getName());
+                }
+            }
+        }
+    }
+    
+    private void scanDirectory(File root, File dir, java.util.List<String> out) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        for (File child : files) {
+            if (child.isDirectory()) {
+                scanDirectory(root, child, out);
+            } else if (child.isFile() && child.getName().endsWith(".class")) {
+                String rel = child.getAbsolutePath().substring(root.getAbsolutePath().length() + 1);
+                String className = rel.replace(File.separatorChar, '.').replaceAll("\\.class$", "");
+                out.add(className);
+            }
+        }
+    }
+
+    private void scanJar(File jarFile, java.util.List<String> out) {
+        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarFile)) {
+            java.util.Enumeration<java.util.jar.JarEntry> en = jf.entries();
+            while (en.hasMoreElements()) {
+                java.util.jar.JarEntry je = en.nextElement();
+                if (!je.isDirectory() && je.getName().endsWith(".class")) {
+                    String className = je.getName().replace('/', '.').replaceAll("\\.class$", "");
+                    out.add(className);
+                }
+            }
+        } catch (IOException e) {
+            // ignore unreadable jars
+        }
+    }
     
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) 
@@ -37,6 +124,17 @@ public class FrontServlet extends HttpServlet {
         
         String resourcePath = requestURI.substring(contextPath.length());
         
+        // Vérifier si l'URL correspond à un mapping de contrôleur
+        Mapping mapping = urlMappings.get(resourcePath);
+        if (mapping != null) {
+            try {
+                handleControllerMethod(mapping, request, response);
+                return;
+            } catch (Exception e) {
+                throw new ServletException("Erreur lors de l'exécution du contrôleur", e);
+            }
+        }
+        
         try {
             java.net.URL resource = getServletContext().getResource(resourcePath);
             if (resource != null) {
@@ -51,6 +149,28 @@ public class FrontServlet extends HttpServlet {
         }
         
         showFrameworkPage(request, response, resourcePath);
+    }
+    
+    private void handleControllerMethod(Mapping mapping, HttpServletRequest request, 
+                                       HttpServletResponse response) throws Exception {
+        Object controllerInstance = mapping.getControllerClass().getDeclaredConstructor().newInstance();
+        Method method = mapping.getMethod();
+        
+        // Vérifier si le type de retour est String
+        if (method.getReturnType().equals(String.class)) {
+            Object result = method.invoke(controllerInstance);
+            
+            if (result != null) {
+                response.setContentType("text/html;charset=UTF-8");
+                PrintWriter out = response.getWriter();
+                out.print(result.toString());
+            }
+        } else {
+            // Type de retour non géré
+            response.setContentType("text/html;charset=UTF-8");
+            PrintWriter out = response.getWriter();
+            out.println("Erreur: La méthode doit retourner un String");
+        }
     }
     
     private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
@@ -89,5 +209,24 @@ public class FrontServlet extends HttpServlet {
         out.println("    </div>");
         out.println("</body>");
         out.println("</html>");
+    }
+    
+    // Classe interne pour stocker le mapping
+    private static class Mapping {
+        private final Class<?> controllerClass;
+        private final Method method;
+        
+        public Mapping(Class<?> controllerClass, Method method) {
+            this.controllerClass = controllerClass;
+            this.method = method;
+        }
+        
+        public Class<?> getControllerClass() {
+            return controllerClass;
+        }
+        
+        public Method getMethod() {
+            return method;
+        }
     }
 }
