@@ -31,9 +31,21 @@ public class FrontServlet extends HttpServlet {
     }
     
     private void scanControllers() throws Exception {
+        java.util.List<String> classNames = new java.util.ArrayList<>();
+        
+        // Scanner WEB-INF/classes (classes de l'application web)
+        String webInfPath = getServletContext().getRealPath("/WEB-INF/classes");
+        System.out.println("Scanning WEB-INF/classes: " + webInfPath);
+        if (webInfPath != null) {
+            File webInfDir = new File(webInfPath);
+            if (webInfDir.exists()) {
+                scanDirectory(webInfDir, webInfDir, classNames);
+            }
+        }
+        
+        // Scanner le classpath système
         String cp = System.getProperty("java.class.path");
         String[] entries = cp.split(File.pathSeparator);
-        java.util.List<String> classNames = new java.util.ArrayList<>();
 
         for (String entry : entries) {
             File f = new File(entry);
@@ -46,18 +58,23 @@ public class FrontServlet extends HttpServlet {
             }
         }
 
+        System.out.println("Total classes found: " + classNames.size());
+
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         for (String cn : classNames) {
             if (cn.contains("$")) continue;
             try {
                 Class<?> c = Class.forName(cn, false, cl);
                 if (c.isAnnotationPresent(Controller.class)) {
+                    System.out.println("Found @Controller: " + cn);
                     registerController(c);
                 }
             } catch (Throwable t) {
-                // ignore classes that cannot be loaded
+                System.err.println("Cannot load class: " + cn + " - " + t.getMessage());
             }
         }
+        
+        System.out.println("Registered URL mappings: " + urlMappings.keySet());
     }
     
     private void registerController(Class<?> controllerClass) throws Exception {
