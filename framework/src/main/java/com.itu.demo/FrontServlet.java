@@ -175,6 +175,10 @@ public class FrontServlet extends HttpServlet {
         
         // Vérifier si le type de retour est String
         if (method.getReturnType().equals(String.class)) {
+            // Invoquer la méthode et récupérer le retour
+            Object result = method.invoke(controllerInstance);
+            String returnValue = (String) result;
+            
             response.setContentType("text/html;charset=UTF-8");
             PrintWriter out = response.getWriter();
             out.println("<!DOCTYPE html>");
@@ -185,13 +189,29 @@ public class FrontServlet extends HttpServlet {
             out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
             out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
             out.println("<p><strong>Type de retour:</strong> " + method.getReturnType().getSimpleName() + "</p>");
+            out.println("<hr>");
+            out.println("<h2>Valeur de retour:</h2>");
+            out.println("<div style='background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 10px 0;'>");
+            out.println("<pre>" + returnValue + "</pre>");
+            out.println("</div>");
             out.println("</body>");
             out.println("</html>");
         } else {
             // Type de retour non géré
             response.setContentType("text/html;charset=UTF-8");
             PrintWriter out = response.getWriter();
-            out.println("Erreur: La méthode doit retourner un String");
+            out.println("<!DOCTYPE html>");
+            out.println("<html>");
+            out.println("<head><title>Framework - Erreur</title></head>");
+            out.println("<body>");
+            out.println("<h1>Erreur de type de retour</h1>");
+            out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
+            out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
+            out.println("<p><strong>Type de retour attendu:</strong> String</p>");
+            out.println("<p><strong>Type de retour actuel:</strong> " + method.getReturnType().getSimpleName() + "</p>");
+            out.println("<p style='color: red;'><strong>Erreur:</strong> La méthode doit retourner un type String</p>");
+            out.println("</body>");
+            out.println("</html>");
         }
     }
     
