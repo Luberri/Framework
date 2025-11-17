@@ -4,6 +4,7 @@ import java.io.*;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import javax.servlet.ServletException;
 import javax.servlet.http.*;
 
@@ -31,34 +32,9 @@ public class FrontServlet extends HttpServlet {
     }
     
     private void scanControllers() throws Exception {
-        java.util.List<String> classNames = new java.util.ArrayList<>();
-        
-        // Scanner WEB-INF/classes (classes de l'application web)
-        String webInfPath = getServletContext().getRealPath("/WEB-INF/classes");
-        System.out.println("Scanning WEB-INF/classes: " + webInfPath);
-        if (webInfPath != null) {
-            File webInfDir = new File(webInfPath);
-            if (webInfDir.exists()) {
-                scanDirectory(webInfDir, webInfDir, classNames);
-            }
-        }
-        
-        // Scanner le classpath système
-        String cp = System.getProperty("java.class.path");
-        String[] entries = cp.split(File.pathSeparator);
-
-        for (String entry : entries) {
-            File f = new File(entry);
-            if (f.exists()) {
-                if (f.isDirectory()) {
-                    scanDirectory(f, f, classNames);
-                } else if (f.isFile() && entry.toLowerCase().endsWith(".jar")) {
-                    scanJar(f, classNames);
-                }
-            }
-        }
-
-        System.out.println("Total classes found: " + classNames.size());
+        // Utiliser la classe Scanner pour obtenir toutes les classes
+        Scanner scanner = new Scanner(getServletContext());
+        List<String> classNames = scanner.scanAllClasses();
 
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         for (String cn : classNames) {
@@ -89,35 +65,6 @@ public class FrontServlet extends HttpServlet {
                         controllerClass.getName() + "." + method.getName());
                 }
             }
-        }
-    }
-    
-    private void scanDirectory(File root, File dir, java.util.List<String> out) {
-        File[] files = dir.listFiles();
-        if (files == null) return;
-        for (File child : files) {
-            if (child.isDirectory()) {
-                scanDirectory(root, child, out);
-            } else if (child.isFile() && child.getName().endsWith(".class")) {
-                String rel = child.getAbsolutePath().substring(root.getAbsolutePath().length() + 1);
-                String className = rel.replace(File.separatorChar, '.').replaceAll("\\.class$", "");
-                out.add(className);
-            }
-        }
-    }
-
-    private void scanJar(File jarFile, java.util.List<String> out) {
-        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarFile)) {
-            java.util.Enumeration<java.util.jar.JarEntry> en = jf.entries();
-            while (en.hasMoreElements()) {
-                java.util.jar.JarEntry je = en.nextElement();
-                if (!je.isDirectory() && je.getName().endsWith(".class")) {
-                    String className = je.getName().replace('/', '.').replaceAll("\\.class$", "");
-                    out.add(className);
-                }
-            }
-        } catch (IOException e) {
-            // ignore unreadable jars
         }
     }
     
