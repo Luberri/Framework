@@ -120,8 +120,9 @@ public class FrontServlet extends HttpServlet {
         Object controllerInstance = mapping.getControllerClass().getDeclaredConstructor().newInstance();
         Method method = mapping.getMethod();
         
-        // Vérifier si le type de retour est String
-        if (!method.getReturnType().equals(String.class)) {
+        // Vérifier si le type de retour est String ou ModelView
+        Class<?> returnType = method.getReturnType();
+        if (!returnType.equals(String.class) && !returnType.equals(ModelView.class)) {
             response.setContentType("text/html;charset=UTF-8");
             PrintWriter out = response.getWriter();
             out.println("<!DOCTYPE html>");
@@ -131,9 +132,9 @@ public class FrontServlet extends HttpServlet {
             out.println("<h1>Erreur de type de retour</h1>");
             out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
             out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
-            out.println("<p><strong>Type de retour attendu:</strong> String</p>");
-            out.println("<p><strong>Type de retour actuel:</strong> " + method.getReturnType().getSimpleName() + "</p>");
-            out.println("<p style='color: red;'><strong>Erreur:</strong> La méthode doit retourner un type String</p>");
+            out.println("<p><strong>Types de retour acceptés:</strong> String ou ModelView</p>");
+            out.println("<p><strong>Type de retour actuel:</strong> " + returnType.getSimpleName() + "</p>");
+            out.println("<p style='color: red;'><strong>Erreur:</strong> La méthode doit retourner un type String ou ModelView</p>");
             out.println("</body>");
             out.println("</html>");
             return;
@@ -141,26 +142,52 @@ public class FrontServlet extends HttpServlet {
         
         // Invoquer la méthode et récupérer le retour
         Object result = method.invoke(controllerInstance);
-        String returnValue = (String) result;
         
-        // Afficher la valeur de retour dans le PrintWriter
-        response.setContentType("text/html;charset=UTF-8");
-        PrintWriter out = response.getWriter();
-        out.println("<!DOCTYPE html>");
-        out.println("<html>");
-        out.println("<head><title>Framework - Method Info</title></head>");
-        out.println("<body>");
-        out.println("<h1>Méthode trouvée</h1>");
-        out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
-        out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
-        out.println("<p><strong>Type de retour:</strong> " + method.getReturnType().getSimpleName() + "</p>");
-        out.println("<hr>");
-        out.println("<h2>Valeur de retour:</h2>");
-        out.println("<div style='background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 10px 0;'>");
-        out.println("<pre>" + (returnValue != null ? returnValue : "(null)") + "</pre>");
-        out.println("</div>");
-        out.println("</body>");
-        out.println("</html>");
+        // Traiter selon le type de retour
+        if (result instanceof ModelView) {
+            // Si c'est un ModelView, transférer vers la vue JSP
+            ModelView mv = (ModelView) result;
+            
+            // Ajouter toutes les données du ModelView dans les attributs de la requête
+            for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                request.setAttribute(entry.getKey(), entry.getValue());
+            }
+            
+            // Faire un forward vers la page JSP
+            String viewName = mv.getViewName();
+            if (viewName != null && !viewName.isEmpty()) {
+                // Ajouter .jsp si pas déjà présent
+                if (!viewName.endsWith(".jsp")) {
+                    viewName = viewName + ".jsp";
+                }
+                
+                RequestDispatcher dispatcher = request.getRequestDispatcher(viewName);
+                dispatcher.forward(request, response);
+            } else {
+                throw new ServletException("Le viewName du ModelView est null ou vide");
+            }
+        } else if (result instanceof String) {
+            // Si c'est une String, afficher directement
+            String returnValue = (String) result;
+            
+            response.setContentType("text/html;charset=UTF-8");
+            PrintWriter out = response.getWriter();
+            out.println("<!DOCTYPE html>");
+            out.println("<html>");
+            out.println("<head><title>Framework - Method Info</title></head>");
+            out.println("<body>");
+            out.println("<h1>Méthode trouvée</h1>");
+            out.println("<p><strong>Classe:</strong> " + mapping.getControllerClass().getName() + "</p>");
+            out.println("<p><strong>Méthode:</strong> " + method.getName() + "</p>");
+            out.println("<p><strong>Type de retour:</strong> String</p>");
+            out.println("<hr>");
+            out.println("<h2>Valeur de retour:</h2>");
+            out.println("<div style='background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 10px 0;'>");
+            out.println("<pre>" + (returnValue != null ? returnValue : "(null)") + "</pre>");
+            out.println("</div>");
+            out.println("</body>");
+            out.println("</html>");
+        }
     }
     
     private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
