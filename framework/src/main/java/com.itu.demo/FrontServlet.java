@@ -1,21 +1,72 @@
 package com.itu.demo;
 
 import java.io.*;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
 import javax.servlet.ServletException;
 import javax.servlet.http.*;
 
-import javax.servlet.ServletException;
 import javax.servlet.RequestDispatcher;
 import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
 import java.io.PrintWriter;
 
+import com.itu.demo.annotations.Controller;
+import com.itu.demo.annotations.HandleURL;
 
-@WebServlet(name = "FrontServlet", urlPatterns = {"/", "*.jsp"}, loadOnStartup = 1)
+@WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
 public class FrontServlet extends HttpServlet {
+    
+    // Map pour stocker URL -> Mapping (classe + méthode)
+    private Map<String, Mapping> urlMappings = new HashMap<>();
+    
+    @Override
+    public void init() throws ServletException {
+        super.init();
+        try {
+            scanControllers();
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors du scan des contrôleurs", e);
+        }
+    }
+    
+    private void scanControllers() throws Exception {
+        // Utiliser la classe Scanner pour obtenir toutes les classes
+        Scanner scanner = new Scanner(getServletContext());
+        List<String> classNames = scanner.scanAllClasses();
+
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        for (String cn : classNames) {
+            if (cn.contains("$")) continue;
+            try {
+                Class<?> c = Class.forName(cn, false, cl);
+                if (c.isAnnotationPresent(Controller.class)) {
+                    System.out.println("Found @Controller: " + cn);
+                    registerController(c);
+                }
+            } catch (Throwable t) {
+                System.err.println("Cannot load class: " + cn + " - " + t.getMessage());
+            }
+        }
+        
+        System.out.println("Registered URL mappings: " + urlMappings.keySet());
+    }
+    
+    private void registerController(Class<?> controllerClass) throws Exception {
+        Method[] methods = controllerClass.getDeclaredMethods();
+        for (Method method : methods) {
+            if (method.isAnnotationPresent(HandleURL.class)) {
+                HandleURL handleURL = method.getAnnotation(HandleURL.class);
+                String url = handleURL.value();
+                if (!url.isEmpty()) {
+                    urlMappings.put(url, new Mapping(controllerClass, method));
+                    System.out.println("Mapped URL: " + url + " -> " + 
+                        controllerClass.getName() + "." + method.getName());
+                }
+            }
+        }
+    }
     
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) 
@@ -37,20 +88,50 @@ public class FrontServlet extends HttpServlet {
         
         String resourcePath = requestURI.substring(contextPath.length());
         
-        try {
-            java.net.URL resource = getServletContext().getResource(resourcePath);
-            if (resource != null) {
-                RequestDispatcher defaultServlet = getServletContext().getNamedDispatcher("default");
-                if (defaultServlet != null) {
-                    defaultServlet.forward(request, response);
-                    return;
-                }
+        // Vérifier si l'URL correspond à un mapping de contrôleur
+        Mapping mapping = urlMappings.get(resourcePath);
+        if (mapping != null) {
+            try {
+                handleControllerMethod(mapping, request, response);
+                return;
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            throw new ServletException("Erreur lors de la vérification de la ressource: " + resourcePath, e);
         }
         
         showFrameworkPage(request, response, resourcePath);
+    }
+
+    private void handleControllerMethod(Mapping mapping, HttpServletRequest request, 
+                                       HttpServletResponse response) throws Exception {
+        Object controllerInstance = mapping.getControllerClass().getDeclaredConstructor().newInstance();
+        Method method = mapping.getMethod();
+        
+        // Invoquer la méthode et récupérer le retour
+        Object result = method.invoke(controllerInstance);
+        
+        // Traiter selon le type de retour
+        if (result instanceof ModelView) {
+            ModelView mv = (ModelView) result;
+            
+            // Ajouter toutes les données du ModelView dans les attributs de la requête
+            for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                request.setAttribute(entry.getKey(), entry.getValue());
+            }
+            
+            // Récupérer le nom de la vue
+            String viewName = mv.getViewName();
+            if (viewName != null && !viewName.isEmpty()) {
+                // Ajouter le préfixe / si nécessaire
+                if (!viewName.startsWith("/")) {
+                    viewName = "/" + viewName;
+                }
+                
+                System.out.println("Forwarding to: " + viewName);
+                RequestDispatcher dispatcher = request.getRequestDispatcher(viewName);
+                dispatcher.forward(request, response);
+            }
+        }
     }
     
     private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
@@ -89,5 +170,24 @@ public class FrontServlet extends HttpServlet {
         out.println("    </div>");
         out.println("</body>");
         out.println("</html>");
+    }
+    
+    // Classe interne pour stocker le mapping
+    private static class Mapping {
+        private final Class<?> controllerClass;
+        private final Method method;
+        
+        public Mapping(Class<?> controllerClass, Method method) {
+            this.controllerClass = controllerClass;
+            this.method = method;
+        }
+        
+        public Class<?> getControllerClass() {
+            return controllerClass;
+        }
+        
+        public Method getMethod() {
+            return method;
+        }
     }
 }

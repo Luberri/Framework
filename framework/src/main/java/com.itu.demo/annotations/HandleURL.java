@@ -1,4 +1,4 @@
-package mg.framework.annotations;
+package com.itu.demo.annotations;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -10,6 +10,5 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface HandleURL {
-	String value() default "";
-	
+    String value() default "";
 }
