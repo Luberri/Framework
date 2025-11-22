@@ -120,19 +120,8 @@ public class FrontServlet extends HttpServlet {
         if (paramTypes.length > 0) {
             for (int i = 0; i < paramTypes.length; i++) {
                 java.lang.reflect.Parameter param = parameters[i];
-                
-                // Vérifier si le paramètre a l'annotation @Param
-                com.itu.demo.annotations.Param paramAnnotation = param.getAnnotation(com.itu.demo.annotations.Param.class);
-                String paramName;
-                
-                if (paramAnnotation != null) {
-                    // Utiliser le nom spécifié dans @Param
-                    paramName = paramAnnotation.value();
-                } else {
-                    // Utiliser le nom du paramètre de la méthode (grâce à -parameters dans pom.xml)
-                    paramName = param.getName();
-                }
-                
+                // Utiliser le nom du paramètre (fonctionne grâce à l'option -parameters dans pom.xml)
+                String paramName = param.getName();
                 String paramValue = request.getParameter(paramName);
                 
                 if (paramValue != null) {
