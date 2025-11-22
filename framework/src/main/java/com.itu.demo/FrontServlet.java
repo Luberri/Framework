@@ -93,8 +93,14 @@ public class FrontServlet extends HttpServlet {
         System.out.println("Context Path: " + contextPath);
         System.out.println("Resource Path: " + resourcePath);
         
-        // Vérifier si l'URL correspond à un mapping de contrôleur
+        // Vérifier si l'URL correspond exactement à un mapping de contrôleur
         Mapping mapping = urlMappings.get(resourcePath);
+        
+        // Si pas de correspondance exacte, chercher un pattern
+        if (mapping == null) {
+            mapping = findMatchingPattern(resourcePath, request);
+        }
+        
         if (mapping != null) {
             try {
                 handleControllerMethod(mapping, request, response);
@@ -105,6 +111,50 @@ public class FrontServlet extends HttpServlet {
         }
         
         showFrameworkPage(request, response, resourcePath);
+    }
+
+    private Mapping findMatchingPattern(String resourcePath, HttpServletRequest request) {
+        for (Map.Entry<String, Mapping> entry : urlMappings.entrySet()) {
+            String pattern = entry.getKey();
+            
+            // Vérifier si le pattern contient des variables {xxx}
+            if (pattern.contains("{")) {
+                String[] patternParts = pattern.split("/");
+                String[] resourceParts = resourcePath.split("/");
+                
+                // Les deux doivent avoir le même nombre de segments
+                if (patternParts.length == resourceParts.length) {
+                    boolean matches = true;
+                    Map<String, String> pathParams = new HashMap<>();
+                    
+                    for (int i = 0; i < patternParts.length; i++) {
+                        String patternPart = patternParts[i];
+                        String resourcePart = resourceParts[i];
+                        
+                        if (patternPart.startsWith("{") && patternPart.endsWith("}")) {
+                            // C'est une variable {id}, {name}, etc.
+                            String paramName = patternPart.substring(1, patternPart.length() - 1);
+                            pathParams.put(paramName, resourcePart);
+                            System.out.println("Found path parameter: " + paramName + " = " + resourcePart);
+                        } else if (!patternPart.equals(resourcePart)) {
+                            // Les segments statiques ne correspondent pas
+                            matches = false;
+                            break;
+                        }
+                    }
+                    
+                    if (matches) {
+                        // Ajouter les path parameters à la requête
+                        for (Map.Entry<String, String> param : pathParams.entrySet()) {
+                            request.setAttribute("_path_param_" + param.getKey(), param.getValue());
+                            System.out.println("Set path parameter: _path_param_" + param.getKey() + " = " + param.getValue());
+                        }
+                        return entry.getValue();
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void handleControllerMethod(Mapping mapping, HttpServletRequest request, 
@@ -129,11 +179,21 @@ public class FrontServlet extends HttpServlet {
                     // Utiliser le nom spécifié dans @Param
                     paramName = paramAnnotation.value();
                 } else {
-                    // Utiliser le nom du paramètre de la méthode (grâce à -parameters dans pom.xml)
+                    // Utiliser le nom du paramètre de la méthode
                     paramName = param.getName();
                 }
                 
+                // Chercher dans les paramètres de requête d'abord
                 String paramValue = request.getParameter(paramName);
+                
+                // Si pas trouvé, chercher dans les path parameters
+                if (paramValue == null) {
+                    Object pathParam = request.getAttribute("_path_param_" + paramName);
+                    if (pathParam != null) {
+                        paramValue = pathParam.toString();
+                        System.out.println("Using path parameter: " + paramName + " = " + paramValue);
+                    }
+                }
                 
                 if (paramValue != null) {
                     // Conversion du paramètre au type attendu
