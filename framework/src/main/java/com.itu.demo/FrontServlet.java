@@ -14,6 +14,7 @@ import java.io.PrintWriter;
 
 import com.itu.demo.annotations.Controller;
 import com.itu.demo.annotations.HandleURL;
+import com.itu.demo.ModelView;
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
 public class FrontServlet extends HttpServlet {
@@ -88,6 +89,10 @@ public class FrontServlet extends HttpServlet {
         
         String resourcePath = requestURI.substring(contextPath.length());
         
+        System.out.println("Request URI: " + requestURI);
+        System.out.println("Context Path: " + contextPath);
+        System.out.println("Resource Path: " + resourcePath);
+        
         // Vérifier si l'URL correspond à un mapping de contrôleur
         Mapping mapping = urlMappings.get(resourcePath);
         if (mapping != null) {
@@ -107,8 +112,30 @@ public class FrontServlet extends HttpServlet {
         Object controllerInstance = mapping.getControllerClass().getDeclaredConstructor().newInstance();
         Method method = mapping.getMethod();
         
-        // Invoquer la méthode et récupérer le retour
-        Object result = method.invoke(controllerInstance);
+        // Récupérer les paramètres de la méthode
+        Class<?>[] paramTypes = method.getParameterTypes();
+        java.lang.reflect.Parameter[] parameters = method.getParameters();
+        Object[] paramValues = new Object[paramTypes.length];
+        
+        if (paramTypes.length > 0) {
+            for (int i = 0; i < paramTypes.length; i++) {
+                java.lang.reflect.Parameter param = parameters[i];
+                // Utiliser le nom du paramètre (fonctionne grâce à l'option -parameters dans pom.xml)
+                String paramName = param.getName();
+                String paramValue = request.getParameter(paramName);
+                
+                if (paramValue != null) {
+                    // Conversion du paramètre au type attendu
+                    paramValues[i] = convertParameter(paramValue, paramTypes[i]);
+                    System.out.println("Parameter: " + paramName + " = " + paramValue);
+                } else {
+                    System.err.println("Paramètre manquant: " + paramName);
+                }
+            }
+        }
+        
+        // Invoquer la méthode avec les paramètres extraits
+        Object result = method.invoke(controllerInstance, paramValues);
         
         // Traiter selon le type de retour
         if (result instanceof ModelView) {
@@ -132,6 +159,19 @@ public class FrontServlet extends HttpServlet {
                 dispatcher.forward(request, response);
             }
         }
+    }
+    
+    private Object convertParameter(String value, Class<?> type) {
+        if (type == int.class || type == Integer.class) {
+            return Integer.parseInt(value);
+        } else if (type == double.class || type == Double.class) {
+            return Double.parseDouble(value);
+        } else if (type == boolean.class || type == Boolean.class) {
+            return Boolean.parseBoolean(value);
+        } else if (type == long.class || type == Long.class) {
+            return Long.parseLong(value);
+        }
+        return value;
     }
     
     private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
