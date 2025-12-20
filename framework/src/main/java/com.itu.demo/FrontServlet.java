@@ -13,13 +13,14 @@ import javax.servlet.annotation.WebServlet;
 import java.io.PrintWriter;
 
 import com.itu.demo.annotations.Controller;
-import com.itu.demo.annotations.HandleURL;
+import com.itu.demo.annotations.Get;
+import com.itu.demo.annotations.Post;
 import com.itu.demo.ModelView;
 
 @WebServlet(name = "FrontServlet", urlPatterns = {"/"}, loadOnStartup = 1)
 public class FrontServlet extends HttpServlet {
     
-    // Map pour stocker URL -> Mapping (classe + méthode)
+    // Map pour stocker URL + méthode HTTP -> Mapping (classe + méthode)
     private Map<String, Mapping> urlMappings = new HashMap<>();
     
     @Override
@@ -33,7 +34,6 @@ public class FrontServlet extends HttpServlet {
     }
     
     private void scanControllers() throws Exception {
-        // Utiliser la classe Scanner pour obtenir toutes les classes
         Scanner scanner = new Scanner(getServletContext());
         List<String> classNames = scanner.scanAllClasses();
 
@@ -57,14 +57,28 @@ public class FrontServlet extends HttpServlet {
     private void registerController(Class<?> controllerClass) throws Exception {
         Method[] methods = controllerClass.getDeclaredMethods();
         for (Method method : methods) {
-            if (method.isAnnotationPresent(HandleURL.class)) {
-                HandleURL handleURL = method.getAnnotation(HandleURL.class);
-                String url = handleURL.value();
-                if (!url.isEmpty()) {
-                    urlMappings.put(url, new Mapping(controllerClass, method));
-                    System.out.println("Mapped URL: " + url + " -> " + 
-                        controllerClass.getName() + "." + method.getName());
-                }
+            String url = null;
+            String httpMethod = null;
+            
+            // Vérifier @Get
+            if (method.isAnnotationPresent(Get.class)) {
+                Get getAnnotation = method.getAnnotation(Get.class);
+                url = getAnnotation.value();
+                httpMethod = "GET";
+            }
+            // Vérifier @Post
+            else if (method.isAnnotationPresent(Post.class)) {
+                Post postAnnotation = method.getAnnotation(Post.class);
+                url = postAnnotation.value();
+                httpMethod = "POST";
+            }
+            
+            if (url != null && !url.isEmpty()) {
+                // Créer une clé unique: méthode HTTP + URL
+                String key = httpMethod + ":" + url;
+                urlMappings.put(key, new Mapping(controllerClass, method, httpMethod));
+                System.out.println("Mapped " + httpMethod + " " + url + " -> " + 
+                    controllerClass.getName() + "." + method.getName());
             }
         }
     }
@@ -72,33 +86,31 @@ public class FrontServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
-        service(request, response);
+        processRequest(request, response);
     }
     
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
-        service(request, response);
+        processRequest(request, response);
     }
     
-    @Override
-    protected void service(HttpServletRequest request, HttpServletResponse response) 
+    protected void processRequest(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
         String requestURI = request.getRequestURI();
         String contextPath = request.getContextPath();
-        
         String resourcePath = requestURI.substring(contextPath.length());
+        String httpMethod = request.getMethod();
         
-        System.out.println("Request URI: " + requestURI);
-        System.out.println("Context Path: " + contextPath);
-        System.out.println("Resource Path: " + resourcePath);
+        System.out.println("Request: " + httpMethod + " " + resourcePath);
         
-        // Vérifier si l'URL correspond exactement à un mapping de contrôleur
-        Mapping mapping = urlMappings.get(resourcePath);
+        // Créer la clé avec la méthode HTTP
+        String mappingKey = httpMethod + ":" + resourcePath;
+        Mapping mapping = urlMappings.get(mappingKey);
         
         // Si pas de correspondance exacte, chercher un pattern
         if (mapping == null) {
-            mapping = findMatchingPattern(resourcePath, request);
+            mapping = findMatchingPattern(resourcePath, httpMethod, request);
         }
         
         if (mapping != null) {
@@ -113,44 +125,49 @@ public class FrontServlet extends HttpServlet {
         showFrameworkPage(request, response, resourcePath);
     }
 
-    private Mapping findMatchingPattern(String resourcePath, HttpServletRequest request) {
+    private Mapping findMatchingPattern(String resourcePath, String httpMethod, HttpServletRequest request) {
         for (Map.Entry<String, Mapping> entry : urlMappings.entrySet()) {
-            String pattern = entry.getKey();
+            String key = entry.getKey();
             
-            // Vérifier si le pattern contient des variables {xxx}
-            if (pattern.contains("{")) {
-                String[] patternParts = pattern.split("/");
-                String[] resourceParts = resourcePath.split("/");
+            // Vérifier que la méthode HTTP correspond
+            if (!key.startsWith(httpMethod + ":")) {
+                continue;
+            }
+            
+            // Extraire le pattern de l'URL
+            String pattern = key.substring(httpMethod.length() + 1);
+            
+            // IMPORTANT: Ne traiter que les patterns avec des variables {xxx}
+            if (!pattern.contains("{")) {
+                continue; // Ignorer les URLs exactes (déjà vérifiées)
+            }
+            
+            String[] patternParts = pattern.split("/");
+            String[] resourceParts = resourcePath.split("/");
+            
+            if (patternParts.length == resourceParts.length) {
+                boolean matches = true;
+                Map<String, String> pathParams = new HashMap<>();
                 
-                // Les deux doivent avoir le même nombre de segments
-                if (patternParts.length == resourceParts.length) {
-                    boolean matches = true;
-                    Map<String, String> pathParams = new HashMap<>();
+                for (int i = 0; i < patternParts.length; i++) {
+                    String patternPart = patternParts[i];
+                    String resourcePart = resourceParts[i];
                     
-                    for (int i = 0; i < patternParts.length; i++) {
-                        String patternPart = patternParts[i];
-                        String resourcePart = resourceParts[i];
-                        
-                        if (patternPart.startsWith("{") && patternPart.endsWith("}")) {
-                            // C'est une variable {id}, {name}, etc.
-                            String paramName = patternPart.substring(1, patternPart.length() - 1);
-                            pathParams.put(paramName, resourcePart);
-                            System.out.println("Found path parameter: " + paramName + " = " + resourcePart);
-                        } else if (!patternPart.equals(resourcePart)) {
-                            // Les segments statiques ne correspondent pas
-                            matches = false;
-                            break;
-                        }
+                    if (patternPart.startsWith("{") && patternPart.endsWith("}")) {
+                        String paramName = patternPart.substring(1, patternPart.length() - 1);
+                        pathParams.put(paramName, resourcePart);
+                        System.out.println("Found path parameter: " + paramName + " = " + resourcePart);
+                    } else if (!patternPart.equals(resourcePart)) {
+                        matches = false;
+                        break;
                     }
-                    
-                    if (matches) {
-                        // Ajouter les path parameters à la requête
-                        for (Map.Entry<String, String> param : pathParams.entrySet()) {
-                            request.setAttribute("_path_param_" + param.getKey(), param.getValue());
-                            System.out.println("Set path parameter: _path_param_" + param.getKey() + " = " + param.getValue());
-                        }
-                        return entry.getValue();
+                }
+                
+                if (matches) {
+                    for (Map.Entry<String, String> param : pathParams.entrySet()) {
+                        request.setAttribute("_path_param_" + param.getKey(), param.getValue());
                     }
+                    return entry.getValue();
                 }
             }
         }
@@ -162,7 +179,6 @@ public class FrontServlet extends HttpServlet {
         Object controllerInstance = mapping.getControllerClass().getDeclaredConstructor().newInstance();
         Method method = mapping.getMethod();
         
-        // Récupérer les paramètres de la méthode
         Class<?>[] paramTypes = method.getParameterTypes();
         java.lang.reflect.Parameter[] parameters = method.getParameters();
         Object[] paramValues = new Object[paramTypes.length];
@@ -170,64 +186,92 @@ public class FrontServlet extends HttpServlet {
         if (paramTypes.length > 0) {
             for (int i = 0; i < paramTypes.length; i++) {
                 java.lang.reflect.Parameter param = parameters[i];
+                Class<?> paramType = paramTypes[i];
                 
-                // Vérifier si le paramètre a l'annotation @Param
-                com.itu.demo.annotations.Param paramAnnotation = param.getAnnotation(com.itu.demo.annotations.Param.class);
-                String paramName;
-                
-                if (paramAnnotation != null) {
-                    // Utiliser le nom spécifié dans @Param
-                    paramName = paramAnnotation.value();
-                } else {
-                    // Utiliser le nom du paramètre de la méthode
-                    paramName = param.getName();
-                }
-                
-                // Chercher dans les paramètres de requête d'abord
-                String paramValue = request.getParameter(paramName);
-                
-                // Si pas trouvé, chercher dans les path parameters
-                if (paramValue == null) {
-                    Object pathParam = request.getAttribute("_path_param_" + paramName);
-                    if (pathParam != null) {
-                        paramValue = pathParam.toString();
-                        System.out.println("Using path parameter: " + paramName + " = " + paramValue);
+                // Si le paramètre est une Map<String, Object>, injecter tous les paramètres de la requête
+                if (Map.class.isAssignableFrom(paramType)) {
+                    Map<String, Object> params = new HashMap<>();
+                    Map<String, String[]> parameterMap = request.getParameterMap();
+                    
+                    for (Map.Entry<String, String[]> entry : parameterMap.entrySet()) {
+                        String key = entry.getKey();
+                        String[] values = entry.getValue();
+                        
+                        // Si une seule valeur, stocker la valeur directement
+                        if (values.length == 1) {
+                            params.put(key, values[0]);
+                        } else {
+                            // Sinon, stocker le tableau
+                            params.put(key, values);
+                        }
                     }
-                }
-                
-                if (paramValue != null) {
-                    // Conversion du paramètre au type attendu
-                    paramValues[i] = convertParameter(paramValue, paramTypes[i]);
-                    System.out.println("Parameter: " + paramName + " = " + paramValue);
+                    
+                    paramValues[i] = params;
+                    System.out.println("Injected Map with parameters: " + params.keySet());
                 } else {
-                    System.err.println("Paramètre manquant: " + paramName);
+                    // Comportement existant pour les paramètres individuels
+                    com.itu.demo.annotations.Param paramAnnotation = param.getAnnotation(com.itu.demo.annotations.Param.class);
+                    String paramName;
+                    
+                    if (paramAnnotation != null) {
+                        paramName = paramAnnotation.value();
+                    } else {
+                        paramName = param.getName();
+                    }
+                    
+                    String paramValue = request.getParameter(paramName);
+                    
+                    if (paramValue == null) {
+                        Object pathParam = request.getAttribute("_path_param_" + paramName);
+                        if (pathParam != null) {
+                            paramValue = pathParam.toString();
+                            System.out.println("Using path parameter: " + paramName + " = " + paramValue);
+                        }
+                    }
+                    
+                    if (paramValue != null) {
+                        paramValues[i] = convertParameter(paramValue, paramType);
+                        System.out.println("Parameter: " + paramName + " = " + paramValue);
+                    } else {
+                        System.err.println("Paramètre manquant: " + paramName);
+                    }
                 }
             }
         }
         
-        // Invoquer la méthode avec les paramètres extraits
         Object result = method.invoke(controllerInstance, paramValues);
         
-        // Traiter selon le type de retour
         if (result instanceof ModelView) {
             ModelView mv = (ModelView) result;
             
-            // Ajouter toutes les données du ModelView dans les attributs de la requête
+            // Copier toutes les données de ModelView dans les attributs de la requête
             for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
                 request.setAttribute(entry.getKey(), entry.getValue());
+                System.out.println("Set attribute: " + entry.getKey() + " = " + entry.getValue());
             }
             
-            // Récupérer le nom de la vue
             String viewName = mv.getViewName();
             if (viewName != null && !viewName.isEmpty()) {
-                // Ajouter le préfixe / si nécessaire
-                if (!viewName.startsWith("/")) {
-                    viewName = "/" + viewName;
+                // Gérer les redirections
+                if (viewName.startsWith("redirect:")) {
+                    String redirectUrl = viewName.substring("redirect:".length());
+                    if (!redirectUrl.startsWith("/")) {
+                        redirectUrl = request.getContextPath() + "/" + redirectUrl;
+                    } else {
+                        redirectUrl = request.getContextPath() + redirectUrl;
+                    }
+                    System.out.println("Redirecting to: " + redirectUrl);
+                    response.sendRedirect(redirectUrl);
+                } else {
+                    // Forward classique
+                    if (!viewName.startsWith("/")) {
+                        viewName = "/" + viewName;
+                    }
+                    
+                    System.out.println("Forwarding to: " + viewName);
+                    RequestDispatcher dispatcher = request.getRequestDispatcher(viewName);
+                    dispatcher.forward(request, response);
                 }
-                
-                System.out.println("Forwarding to: " + viewName);
-                RequestDispatcher dispatcher = request.getRequestDispatcher(viewName);
-                dispatcher.forward(request, response);
             }
         }
     }
@@ -237,60 +281,23 @@ public class FrontServlet extends HttpServlet {
             return Integer.parseInt(value);
         } else if (type == double.class || type == Double.class) {
             return Double.parseDouble(value);
-        } else if (type == boolean.class || type == Boolean.class) {
-            return Boolean.parseBoolean(value);
-        } else if (type == long.class || type == Long.class) {
-            return Long.parseLong(value);
-        }
-        return value;
-    }
-    
-    private void showFrameworkPage(HttpServletRequest request, HttpServletResponse response, 
-                                 String requestedPath) 
-            throws IOException {
-        
-        response.setContentType("text/html;charset=UTF-8");
-        PrintWriter out = response.getWriter();
-        
-        out.println("<!DOCTYPE html>");
-        out.println("<html lang='fr'>");
-        out.println("<head>");
-        out.println("    <meta charset='UTF-8'>");
-        out.println("    <meta name='viewport' content='width=device-width, initial-scale=1.0'>");
-        out.println("    <title>Framework Java - Page non trouvée</title>");
-        out.println("    <style>");
-        out.println("        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 40px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); color: #212529; min-height: 100vh; }");
-        out.println("        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); border: 1px solid #e9ecef; }");
-        out.println("        h1 { color: #212529; text-align: center; margin-bottom: 30px; padding-bottom: 15px; border-bottom: 2px solid #333; font-weight: 300; font-size: 2.5em; }");
-        out.println("        .message { background: #f8f9fa; padding: 25px; border-radius: 12px; border-left: 4px solid #333; margin: 25px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }");
-        out.println("        .path { font-family: 'Courier New', monospace; background: #e9ecef; padding: 12px 16px; border-radius: 8px; display: inline-block; margin: 15px 0; font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }");
-        out.println("        .footer { margin-top: 30px; text-align: center; color: #6c757d; font-size: 14px; padding-top: 20px; border-top: 1px solid #dee2e6; }");
-        out.println("        p { line-height: 1.6; margin-bottom: 15px; color: #495057; }");
-        out.println("        h3 { color: #333; margin-bottom: 15px; font-weight: 500; }");
-        out.println("    </style>");
-        out.println("</head>");
-        out.println("<body>");
-        out.println("    <div class='container'>");
-        out.println("        <h1>FRAMEWORK JAVA</h1>");
-        
-        out.println("        <div class='message'>");
-        out.println("            <h3>Ressource non trouvée</h3>");
-        out.println("            <p>Voici l'URL demandée :</p>");
-        out.println("            <div class='path'><strong>" + requestedPath + "</strong></div>");
+        } else if (type == boolean.class || type == Boolean.class)
         out.println("        </div>");
         out.println("    </div>");
         out.println("</body>");
         out.println("</html>");
     }
     
-    // Classe interne pour stocker le mapping
+    // Classe interne modifiée pour inclure la méthode HTTP
     private static class Mapping {
         private final Class<?> controllerClass;
         private final Method method;
+        private final String httpMethod;
         
-        public Mapping(Class<?> controllerClass, Method method) {
+        public Mapping(Class<?> controllerClass, Method method, String httpMethod) {
             this.controllerClass = controllerClass;
             this.method = method;
+            this.httpMethod = httpMethod;
         }
         
         public Class<?> getControllerClass() {
@@ -299,6 +306,10 @@ public class FrontServlet extends HttpServlet {
         
         public Method getMethod() {
             return method;
+        }
+        
+        public String getHttpMethod() {
+            return httpMethod;
         }
     }
 }
