@@ -20,6 +20,7 @@ import com.itu.demo.annotations.Controller;
 import com.itu.demo.annotations.Get;
 import com.itu.demo.annotations.Post;
 import com.itu.demo.annotations.Param;
+import com.itu.demo.annotations.RestApi;
 
 @WebServlet(name = "FrontServlet", urlPatterns = { "/" }, loadOnStartup = 1)
 public class FrontServlet extends HttpServlet {
@@ -205,6 +206,12 @@ public class FrontServlet extends HttpServlet {
 
         Object result = method.invoke(controller, values);
 
+        // Vérifier si c'est une API REST
+        if (method.isAnnotationPresent(RestApi.class)) {
+            handleRestResponse(result, response);
+            return;
+        }
+
         if (result instanceof ModelView) {
             ModelView mv = (ModelView) result;
 
@@ -220,6 +227,20 @@ public class FrontServlet extends HttpServlet {
                 rd.forward(request, response);
             }
         }
+    }
+
+    private void handleRestResponse(Object result, HttpServletResponse response) throws IOException {
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        ApiResponse apiResponse;
+        if (result instanceof ApiResponse) {
+            apiResponse = (ApiResponse) result;
+        } else {
+            apiResponse = ApiResponse.success(result);
+        }
+
+        response.getWriter().write(apiResponse.toJson());
     }
 
     private Object convertParameter(String v, Class<?> t) {
