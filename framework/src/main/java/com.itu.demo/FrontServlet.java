@@ -3,7 +3,9 @@ package com.itu.demo;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
@@ -11,10 +13,12 @@ import java.util.Map;
 
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletException;
+import javax.servlet.annotation.MultipartConfig;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.Part;
 
 import com.itu.demo.annotations.Controller;
 import com.itu.demo.annotations.Get;
@@ -23,6 +27,11 @@ import com.itu.demo.annotations.Param;
 import com.itu.demo.annotations.RestApi;
 
 @WebServlet(name = "FrontServlet", urlPatterns = { "/" }, loadOnStartup = 1)
+@MultipartConfig(
+    fileSizeThreshold = 1024 * 1024,      // 1 MB
+    maxFileSize = 1024 * 1024 * 10,       // 10 MB
+    maxRequestSize = 1024 * 1024 * 50     // 50 MB
+)
 public class FrontServlet extends HttpServlet {
 
     private final Map<String, Mapping> urlMappings = new HashMap<>();
@@ -169,38 +178,53 @@ public class FrontServlet extends HttpServlet {
         java.lang.reflect.Parameter[] params = method.getParameters();
         Object[] values = new Object[types.length];
 
+        // Extraire les fichiers et les données du formulaire
+        Map<String, Object> formData = new HashMap<>();
+        Map<String, UploadedFile> uploadedFiles = new HashMap<>();
+        
+        extractFormDataAndFiles(request, formData, uploadedFiles);
+
         for (int i = 0; i < types.length; i++) {
             Class<?> type = types[i];
             java.lang.reflect.Parameter p = params[i];
 
-            if (Map.class.isAssignableFrom(type)) {
-                Map<String, Object> map = new HashMap<>();
-                request.getParameterMap().forEach((k, v) ->
-                        map.put(k, v.length == 1 ? v[0] : v)
-                );
-                values[i] = map;
-                continue;
-            }
-
             Param paramAnn = p.getAnnotation(Param.class);
             String name = (paramAnn != null) ? paramAnn.value() : p.getName();
 
+            // Gestion Map<String, UploadedFile> pour les fichiers
+            if (Map.class.isAssignableFrom(type)) {
+                // Vérifier si c'est une Map de fichiers via le nom du paramètre
+                if (name.toLowerCase().contains("file") || name.toLowerCase().contains("upload")) {
+                    values[i] = uploadedFiles;
+                } else {
+                    values[i] = formData;
+                }
+                continue;
+            }
+
+            // Gestion UploadedFile directement
+            if (type == UploadedFile.class) {
+                values[i] = uploadedFiles.get(name);
+                continue;
+            }
+
+            // Gestion des objets complexes
             if (!type.isPrimitive()
                     && !type.getName().startsWith("java.")
                     && !type.isEnum()) {
-
                 values[i] = bindAndPopulate(type, name, request);
                 continue;
             }
 
-            String value = request.getParameter(name);
+            // Gestion des paramètres simples
+            Object value = formData.get(name);
             if (value == null) {
                 Object pathValue = request.getAttribute("_path_param_" + name);
                 if (pathValue != null) value = pathValue.toString();
             }
 
             if (value != null) {
-                values[i] = convertParameter(value, type);
+                values[i] = convertParameter(value.toString(), type);
             }
         }
 
@@ -226,6 +250,73 @@ public class FrontServlet extends HttpServlet {
                 RequestDispatcher rd = request.getRequestDispatcher(view);
                 rd.forward(request, response);
             }
+        }
+    }
+
+    private void extractFormDataAndFiles(HttpServletRequest request,
+                                         Map<String, Object> formData,
+                                         Map<String, UploadedFile> uploadedFiles) throws Exception {
+
+        String contentType = request.getContentType();
+
+        // Vérifier si c'est un formulaire multipart
+        if (contentType != null && contentType.toLowerCase().contains("multipart/form-data")) {
+            for (Part part : request.getParts()) {
+                String fieldName = part.getName();
+                String fileName = getFileName(part);
+
+                if (fileName != null && !fileName.isEmpty()) {
+                    // C'est un fichier
+                    byte[] content = readPartContent(part);
+                    UploadedFile uploadedFile = new UploadedFile(
+                        fileName, 
+                        content, 
+                        part.getContentType()
+                    );
+                    uploadedFiles.put(fieldName, uploadedFile);
+                } else {
+                    // C'est un champ de formulaire normal
+                    String value = new String(readPartContent(part), "UTF-8");
+                    formData.put(fieldName, value);
+                }
+            }
+        } else {
+            // Formulaire classique sans fichier
+            request.getParameterMap().forEach((k, v) ->
+                formData.put(k, v.length == 1 ? v[0] : v)
+            );
+        }
+    }
+
+    private String getFileName(Part part) {
+        String contentDisposition = part.getHeader("content-disposition");
+        if (contentDisposition != null) {
+            for (String token : contentDisposition.split(";")) {
+                if (token.trim().startsWith("filename")) {
+                    String fileName = token.substring(token.indexOf('=') + 1).trim()
+                            .replace("\"", "");
+                    // Gérer les chemins Windows
+                    int lastIndex = fileName.lastIndexOf("\\");
+                    if (lastIndex >= 0) {
+                        fileName = fileName.substring(lastIndex + 1);
+                    }
+                    return fileName;
+                }
+            }
+        }
+        return null;
+    }
+
+    private byte[] readPartContent(Part part) throws IOException {
+        try (InputStream is = part.getInputStream();
+             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+            
+            byte[] data = new byte[1024];
+            int nRead;
+            while ((nRead = is.read(data, 0, data.length)) != -1) {
+                buffer.write(data, 0, nRead);
+            }
+            return buffer.toByteArray();
         }
     }
 
